@@ -19,6 +19,15 @@ from client.n2n_community import N2NCommunity
 from client.clientsim import ClientSim
 
 
+
+def ip2int(addr):                                                               
+    return struct.unpack("!I", socket.inet_aton(addr))[0]                       
+
+
+def int2ip(addr):                                                               
+    return socket.inet_ntoa(struct.pack("!I", addr)) 
+
+
 class N2NSimulator(object):
     
     DEFAULT_IFACE =  "eth0:0"
@@ -28,11 +37,29 @@ class N2NSimulator(object):
     
     MAX_CLIENTS_PER_COMMUNITY = 1
     
+    SERVER_PORT = 44000
+    SERVER_MPORT = 45000
+    
+    SN_IP_RANGE_START = ip2int("33.0.0.1")
+    
+    EDGE_PORT = 46000
+    
+    EDGE_IP_RANGE_START = ip2int("33.0.0.101")
+    
+    
+    
     def __init__(self):
         self.servers = []
         self.communities = []
         self.iface = N2NSimulator.DEFAULT_IFACE
         self.filter = None
+        
+    def __del__(self):
+        print("destroy simulator")
+        if self.filter:
+            self.filter.stop()
+            self.filter.join()
+            self.filter = None
         
     def setSupernodePath(self, path):
         from server.supernode import Supernode#TODO
@@ -41,54 +68,62 @@ class N2NSimulator(object):
     def setEdgePath(self, path):
         from client.edge import Edge#TODO
         Edge.PATH = path
+        
+    def configQueue(self, bool_add):
+        iptables_args = [ "iptables", ("-A" if bool_add else "-D"), 
+                          "INPUT", "-m", "iprange", 
+                          "--src-range", "33.0.0.1-33.0.0.255", 
+                          "--dst-range", "33.0.0.1-33.0.0.255", 
+                          "-j", "NFQUEUE", "--queue-num", ("%d" % (N2NSimulator.QUEUE_NUM)) 
+                        ]
+        #TODO enable iptables_args = ["iptables", "-A", "INPUT", "-p", "udp", "-m", "udp", "--sport", "44000:44999", "--dport", "44000:44999", "-j", "NFQUEUE", "--queue-num", "0"]
+        call(iptables_args)
 
     def initEnvironment(self):
         '''
         ifconfig eth0:0 33.0.0.1 netmask 255.255.255.0 up
         iptables -A INPUT -m iprange --src-range 33.0.0.1-33.0.0.255 --dst-range 33.0.0.1-33.0.0.255  -j NFQUEUE --queue-num 0
         '''
-        ifconfig_args = ["ifconfig", self.iface, "33.0.0.1", "netmask", "255.255.255.0", "up"]
-        #call(ifconfig_args)
-        
-        #iptables_args = ["iptables", "-A", "INPUT", "-m", "iprange", "--src-range", "33.0.0.1-33.0.0.255", "--dst-range", "33.0.0.1-33.0.0.255", "-j", "NFQUEUE", "--queue-num", "0"]
-        #TODO enable iptables_args = ["iptables", "-A", "INPUT", "-p", "udp", "-m", "udp", "--sport", "44000:44999", "--dport", "44000:44999", "-j", "NFQUEUE", "--queue-num", "0"]
-        #TODO enable call(iptables_args)
+        ifconfig_args = [ "ifconfig", self.iface, "33.0.0.1", 
+                          "netmask", "255.255.255.0", 
+                          "up"
+                        ]
+        call(ifconfig_args)
+        self.configQueue(True)
         
     def startClient(self, client):
-        ip_args = ["ip", "addr", "add", client.ip, "broadcast", "33.0.0.255", "dev", self.iface]
+        ip_args = [ "ip", "addr", "add", client.ip, "broadcast", "33.0.0.255", "dev", self.iface ]
         call(ip_args)
 
-    def clientStopped(self, client):#TODO remove
-        ip_args = ["ip", "addr", "add", client.ip, "broadcast", "33.0.0.255", "dev", self.iface]
+    def stopClient(self, client):#TODO remove
+        ip_args = ["ip", "addr", "del", client.ip, "dev", self.iface]
         call(ip_args)
         
     # Servers ------------------------------------------------------------------
         
     def createServers(self, servers_num):
+        prev_addr = None
         for i in range(servers_num):
             server = ServerSim()
+            sn = server.supernode
+            # Local address
+            addr = int2ip( N2NSimulator.SN_IP_RANGE_START + i )
+            port = "%s:%d" % (addr, N2NSimulator.SERVER_PORT + i)
+            sn.params.port.setValue(port)
+            # Local management address
+            mport = "127.0.0.1:%d" % (N2NSimulator.SERVER_MPORT + i)
+            sn.params.mgmt_port.setValue(mport)
+            # Peer supernode address
+            if prev_addr:
+                sn.params.supernode.setValue(prev_addr)
+            
             self.servers.append(server)
+            prev_addr = port
             
     def startServers(self):
-        port = 44000#TODO
-        mport = 45000#TODO
-        
-        prev_sn = None
         for server in self.servers:
-            crnt_sn = server.supernode
-            crnt_sn.params.port.setValue(port)
-            crnt_sn.params.mgmt_port.setValue(mport)
-            
-            if prev_sn:
-                addr = ("%s:%d") % ("127.0.0.1", prev_sn.params.port)
-                crnt_sn.params.supernode.setValue(addr)
-            
-            crnt_sn.run()
+            server.supernode.run()
             time.sleep(3)
-            
-            port += 1
-            mport += 1
-            prev_sn = crnt_sn
             
     def stopServers(self):
         for server in self.servers:
@@ -96,7 +131,7 @@ class N2NSimulator(object):
     
     
     # Clients ------------------------------------------------------------------
-        
+    
     def createCommunities(self, communities_num):
         for i in range(communities_num):
             name = "%s%03d" % (N2NSimulator.DEFAULT_COMM_NAME, i)
@@ -105,7 +140,18 @@ class N2NSimulator(object):
             community = N2NCommunity(name, None)
             
             for j in range(N2NSimulator.MAX_CLIENTS_PER_COMMUNITY):
-                client = ClientSim("ip_str")
+                #-d n2n0 -u 99 -g 99 -m 3C:A0:12:34:56:78 -a dhcp:1.2.3.4 -l 192.168.1.102:7777
+                #TODO macs and ips
+                addr = int2ip( N2NSimulator.EDGE_IP_RANGE_START + i * j )
+                client = ClientSim(addr)
+                edge = client.edge
+                port = "%s:%d" % (addr, N2NSimulator.EDGE_PORT + i * j)
+                edge.params.port.setValue(port)
+                edge.params.super_addr.setValue("%s:%s" % (int2ip(N2NSimulator.SN_IP_RANGE_START), N2NSimulator.SERVER_PORT))#TODO
+                edge.params.device_name.setValue("n2n%02d" % (i * j))
+                edge.params.device_mac.setValue("3C:A0:12:34:56:78")#TODO
+                edge.params.device_addr.setValue("1.2.3.4")#TODO
+                
                 community.addMember(client)
                 
             self.communities.append(community)
@@ -113,12 +159,7 @@ class N2NSimulator(object):
     def startCommunities(self):
         for c in self.communities:
             for m in c.members:
-                #-d n2n0 -u 99 -g 99 -m 3C:A0:12:34:56:78 -a dhcp:1.2.3.4 -l 192.168.1.102:7777
-                #TODO macs and ips
-                m.edge.params.super_addr.setValue("127.0.0.1:44000")
-                m.edge.params.device_name.setValue("n2n0")
-                m.edge.params.device_mac.setValue("3C:A0:12:34:56:78")
-                m.edge.params.device_addr.setValue("1.2.3.4")
+                self.startClient(m)
                 m.edge.run()
                 time.sleep(3)
     
@@ -126,6 +167,7 @@ class N2NSimulator(object):
         for c in self.communities:
             for m in c.members:
                 m.edge.stop()
+                self.stopClient(m)
                 
     # Simulator states ---------------------------------------------------------
     
@@ -135,14 +177,19 @@ class N2NSimulator(object):
                 
     def start(self):
         self.initEnvironment()
-        #self.filter = Filter(N2NSimulator.QUEUE_NUM, self)
-        #self.filter.start()
+        self.filter = Filter(N2NSimulator.QUEUE_NUM, self.handleUdp)
+        self.filter.start()
         self.startServers()
         self.startCommunities()
         
     def stop(self):
+        print("stopping simulator")
         self.stopCommunities()
         self.stopServers()
+        self.filter.stop()
+        self.filter.join()
+        self.filter = None
+        self.configQueue(False)
         
     # Running ------------------------------------------------------------------
     
