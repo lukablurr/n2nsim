@@ -14,8 +14,8 @@ class EdgeParams(N2NParams):
         N2NParams.__init__(self)
         
         self.community  = Param(Param.STR,  "c")
-        self.port       = Param(Param.INT,  "p")
-        self.mgmt_port  = Param(Param.INT,  "t", 5644)
+        self.port       = Param(Param.STR,  "p")
+        self.mgmt_port  = Param(Param.STR,  "t", "5644")
         self.routing    = Param(Param.BOOL, "r")
 
         self.super_addr         = Param(Param.STR,  "l")

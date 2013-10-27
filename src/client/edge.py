@@ -32,7 +32,7 @@ class Edge(N2NProcess):
         if not self.process:
             return
         sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-        addr = ("127.0.0.1", self.params.mgmt_port.value)
+        addr = ("127.0.0.1", int(self.params.mgmt_port.value))
         sock.sendto("stop", addr)
         self.process.wait()
 
