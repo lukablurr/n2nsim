@@ -7,16 +7,15 @@ import subprocess
 
 class N2NProcess(object):
     
-    PATH = None
-    
     def __init__(self):
         self.params = None
         self.process = None
             
-    def run(self):
-        args = [ self.PATH ]
+    def run(self, path):
+        args = [ path ]
         for t in self.params.toListOfTuples():
             args.extend(t)
+        print("Run: %s" % (" ".join(args)))
         self.process = subprocess.Popen(args)
         
     def stop(self):
