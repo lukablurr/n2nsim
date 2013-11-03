@@ -1,8 +1,12 @@
 '''
 N2N Community class
 '''
+from client.communitycfg import CommunityConfig
+
 
 class N2NCommunity(object):
+    
+    CONFIG = CommunityConfig()
     
     def __init__(self, name, key):
         self.name = name

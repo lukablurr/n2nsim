@@ -5,12 +5,10 @@ Edge wrapper
 import socket
 from cmn.n2n_process import N2NProcess
 from client.edgep import EdgeParams
-from client import n2n_community
+from client import community
 
 
 class Edge(N2NProcess):
-    
-    PATH = "edge"
     
     def __init__(self):
         N2NProcess.__init__(self)
