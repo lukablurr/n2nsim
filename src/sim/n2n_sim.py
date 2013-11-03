@@ -2,56 +2,28 @@
 N2N Simulator
 '''
 #TODO from n2npy import *
-import os
+
 import time
-import socket
-import struct
-import pcap
 import nfqueue
-import signal
 from subprocess import call
-from socket import AF_INET, AF_INET6, inet_ntoa
+from socket import inet_ntoa
 from dpkt import ip
 
+from sim.simcfg import SimulatorConfig
 from sim.filter import Filter
 from server.serversim import ServerSim
-from client.n2n_community import N2NCommunity
+from client.community import N2NCommunity
 from client.clientsim import ClientSim
-
-
-
-def ip2int(addr):                                                               
-    return struct.unpack("!I", socket.inet_aton(addr))[0]                       
-
-
-def int2ip(addr):                                                               
-    return socket.inet_ntoa(struct.pack("!I", addr)) 
+from utils.net import int2ip
 
 
 class N2NSimulator(object):
     
-    DEFAULT_IFACE =  "eth0:0"
-    DEFAULT_COMM_NAME = "community"
-    
-    QUEUE_NUM = 0
-    
-    MAX_CLIENTS_PER_COMMUNITY = 1
-    
-    SERVER_PORT = 44000
-    SERVER_MPORT = 45000
-    
-    SN_IP_RANGE_START = ip2int("33.0.0.1")
-    
-    EDGE_PORT = 46000
-    
-    EDGE_IP_RANGE_START = ip2int("33.0.0.101")
-    
-    
+    CONFIG = SimulatorConfig()
     
     def __init__(self):
         self.servers = []
         self.communities = []
-        self.iface = N2NSimulator.DEFAULT_IFACE
         self.filter = None
         
     def __del__(self):
@@ -61,93 +33,83 @@ class N2NSimulator(object):
             self.filter.join()
             self.filter = None
         
-    def setSupernodePath(self, path):
-        from server.supernode import Supernode#TODO
-        Supernode.PATH = path
-        
-    def setEdgePath(self, path):
-        from client.edge import Edge#TODO
-        Edge.PATH = path
-        
     def configQueue(self, bool_add):
-        iptables_args = [ "iptables", ("-A" if bool_add else "-D"), 
-                          "INPUT", "-m", "iprange", 
-                          "--src-range", "33.0.0.1-33.0.0.255", 
-                          "--dst-range", "33.0.0.1-33.0.0.255", 
-                          "-j", "NFQUEUE", "--queue-num", ("%d" % (N2NSimulator.QUEUE_NUM)) 
-                        ]
-        #TODO enable iptables_args = ["iptables", "-A", "INPUT", "-p", "udp", "-m", "udp", "--sport", "44000:44999", "--dport", "44000:44999", "-j", "NFQUEUE", "--queue-num", "0"]
-        call(iptables_args)
+        op = ("-A" if bool_add else "-D") # add/delete
+        queue = ("%d" % (N2NSimulator.CONFIG.queue))
+        ranges = [ ServerSim.CONFIG.ip_range.toString(), 
+                   ClientSim.CONFIG.ip_range.toString() ]
+        for r in ranges:
+            iptables_args = [ "iptables", op, 
+                              "INPUT", "-m", "iprange", 
+                              "--src-range", r, "--dst-range", r, 
+                              "-j", "NFQUEUE", "--queue-num", queue 
+                            ]
+            cmd = " ".join(iptables_args)
+            print("Run command: %s" % cmd)
+            #TODO enable iptables_args = ["iptables", "-A", "INPUT", "-p", "udp", "-m", "udp", "--sport", "44000:44999", "--dport", "44000:44999", "-j", "NFQUEUE", "--queue-num", "0"]
+            call(iptables_args)
 
     def initEnvironment(self):
         '''
         ifconfig eth0:0 33.0.0.1 netmask 255.255.255.0 up
         iptables -A INPUT -m iprange --src-range 33.0.0.1-33.0.0.255 --dst-range 33.0.0.1-33.0.0.255  -j NFQUEUE --queue-num 0
         '''
-        ifconfig_args = [ "ifconfig", self.iface, "33.0.0.1", 
-                          "netmask", "255.255.255.0", 
-                          "up"
-                        ]
-        call(ifconfig_args)
-        self.configQueue(True)
         
-    def startClient(self, client):
-        ip_args = [ "ip", "addr", "add", client.ip, "broadcast", "33.0.0.255", "dev", self.iface ]
-        call(ip_args)
-
-    def stopClient(self, client):#TODO remove
-        ip_args = ["ip", "addr", "del", client.ip, "dev", self.iface]
-        call(ip_args)
+        ServerSim.CONFIG.initEnvironment()
+        ClientSim.CONFIG.initEnvironment()
+        
+        self.configQueue(True)
         
     # Servers ------------------------------------------------------------------
         
-    def createServers(self, servers_num):
+    def createServers(self):
         prev_addr = None
-        for i in range(servers_num):
-            server = ServerSim()
-            sn = server.supernode
+        for i in range(ServerSim.CONFIG.max):
             # Local address
-            addr = int2ip( N2NSimulator.SN_IP_RANGE_START + i )
-            port = "%s:%d" % (addr, N2NSimulator.SERVER_PORT + i)
-            sn.params.port.setValue(port)
-            # Local management address
-            mport = "127.0.0.1:%d" % (N2NSimulator.SERVER_MPORT + i)
-            sn.params.mgmt_port.setValue(mport)
-            # Peer supernode address
-            if prev_addr:
-                sn.params.supernode.setValue(prev_addr)
+            ip = ServerSim.CONFIG.ip_range.start + i
+            port = ServerSim.CONFIG.port + i
+            # Local management port
+            mport = ServerSim.CONFIG.mport + i
+            # Server instance
+            server = ServerSim(ip, port, mport, prev_addr)
             
             self.servers.append(server)
-            prev_addr = port
+            prev_addr = (ip, port)
             
     def startServers(self):
         for server in self.servers:
-            server.supernode.run()
+            server.start()
             time.sleep(3)
             
     def stopServers(self):
         for server in self.servers:
-            server.supernode.stop()
+            server.stop()
     
     
     # Clients ------------------------------------------------------------------
     
-    def createCommunities(self, communities_num):
-        for i in range(communities_num):
-            name = "%s%03d" % (N2NSimulator.DEFAULT_COMM_NAME, i)
+    def createCommunities(self):
+        super_addr = "%s:%s" % ( int2ip(ServerSim.CONFIG.ip_range.start), 
+                                 ServerSim.CONFIG.port )
+        
+        for i in range(N2NCommunity.CONFIG.max):
+            name = "%s%03d" % (N2NCommunity.CONFIG.name_prefix, i)
             print ("Creating %s community" % (name))
             
             community = N2NCommunity(name, None)
             
-            for j in range(N2NSimulator.MAX_CLIENTS_PER_COMMUNITY):
+            for j in range(N2NCommunity.CONFIG.max_clients):
                 #-d n2n0 -u 99 -g 99 -m 3C:A0:12:34:56:78 -a dhcp:1.2.3.4 -l 192.168.1.102:7777
                 #TODO macs and ips
-                addr = int2ip( N2NSimulator.EDGE_IP_RANGE_START + i * j )
-                client = ClientSim(addr)
+                # Local address
+                ip = ClientSim.CONFIG.ip_range.start + i * j
+                port = ClientSim.CONFIG.port + i * j
+                
+                client = ClientSim(ip, port, 0)
+                
                 edge = client.edge
-                port = "%s:%d" % (addr, N2NSimulator.EDGE_PORT + i * j)
-                edge.params.port.setValue(port)
-                edge.params.super_addr.setValue("%s:%s" % (int2ip(N2NSimulator.SN_IP_RANGE_START), N2NSimulator.SERVER_PORT))#TODO
+                #edge.params.port.setValue(port)
+                edge.params.super_addr.setValue(super_addr)#TODO
                 edge.params.device_name.setValue("n2n%02d" % (i * j))
                 edge.params.device_mac.setValue("3C:A0:12:34:56:78")#TODO
                 edge.params.device_addr.setValue("1.2.3.4")#TODO
@@ -159,21 +121,19 @@ class N2NSimulator(object):
     def startCommunities(self):
         for c in self.communities:
             for m in c.members:
-                self.startClient(m)
-                m.edge.run()
+                m.start()
                 time.sleep(3)
     
     def stopCommunities(self):
         for c in self.communities:
             for m in c.members:
-                m.edge.stop()
-                self.stopClient(m)
-                
+                m.stop()
+    
     # Simulator states ---------------------------------------------------------
     
-    def init(self, servers_num, communities_num):
-        self.createServers(servers_num)
-        self.createCommunities(communities_num)
+    def init(self):
+        self.createServers()
+        self.createCommunities()
                 
     def start(self):
         self.initEnvironment()
@@ -205,3 +165,14 @@ class N2NSimulator(object):
     
         payload.set_verdict(nfqueue.NF_ACCEPT)
         return 1
+    
+    # Statics ------------------------------------------------------------------
+    
+    @staticmethod
+    def configure(config_file):
+        N2NSimulator.CONFIG.read_from_file(config_file)
+        ServerSim.CONFIG.read_from_file(config_file)
+        N2NCommunity.CONFIG.read_from_file(config_file)
+        ClientSim.CONFIG.read_from_file(config_file)
+    
+    
