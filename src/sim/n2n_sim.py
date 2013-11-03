@@ -137,7 +137,7 @@ class N2NSimulator(object):
                 
     def start(self):
         self.initEnvironment()
-        self.filter = Filter(N2NSimulator.QUEUE_NUM, self.handleUdp)
+        self.filter = Filter(N2NSimulator.CONFIG.queue, self.handleUdp)
         self.filter.start()
         self.startServers()
         self.startCommunities()
