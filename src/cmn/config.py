@@ -1,4 +1,7 @@
 import ConfigParser
+from subprocess import call
+from utils.iprange import IpRange
+from utils.net import int2ip
 
 
 class Config(object):
@@ -28,4 +31,33 @@ class Config(object):
     def read_vars(self, config_parser):
         raise Exception("Abstract method")
 
-        
+
+class NodeConfig(Config):
+    
+    def __init__(self):
+        Config.__init__(self)
+        self.path = None
+        self.iface = None
+        self.ip_range = None
+        self.port = 0
+        self.mport = 0
+    
+    def read_vars(self, config_parser):
+        self.path = self.read_string(config_parser, 'path')
+        self.iface = self.read_string(config_parser, 'iface')
+        ip_range_str = self.read_string(config_parser, 'ip')
+        self.ip_range = IpRange.fromString(ip_range_str)
+        self.port = self.read_int(config_parser, 'port')
+        self.mport = self.read_int(config_parser, 'mport')
+    
+    def initEnvironment(self):
+        ''' E.g. ifconfig eth0:0 33.0.0.1 netmask 255.255.255.0 up '''
+        ifconfig_args = [ "ifconfig", self.iface,
+                          int2ip(self.ip_range.start),
+                          "netmask", int2ip(self.ip_range.netmask()),
+                          "up"
+                        ]
+        cmd = " ".join(ifconfig_args)
+        print("Run command: %s" % cmd)
+        call(ifconfig_args)
+
