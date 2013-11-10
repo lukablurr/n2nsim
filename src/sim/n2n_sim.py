@@ -5,7 +5,6 @@ N2N Simulator
 
 import time
 import nfqueue
-from subprocess import call
 from socket import inet_ntoa
 from dpkt import ip
 
@@ -15,16 +14,20 @@ from server.serversim import ServerSim
 from client.community import N2NCommunity
 from client.clientsim import ClientSim
 from utils.net import int2ip
+from utils.iprange import IpRange
+from utils.tools import run_cmd
 
 
 class N2NSimulator(object):
     
     CONFIG = SimulatorConfig()
+    INTERVAL = 3
     
     def __init__(self):
         self.servers = []
         self.communities = []
         self.filter = None
+        self.running = False
         
     def __del__(self):
         print("destroy simulator")
@@ -36,29 +39,25 @@ class N2NSimulator(object):
     def configQueue(self, bool_add):
         op = ("-A" if bool_add else "-D") # add/delete
         queue = ("%d" % (N2NSimulator.CONFIG.queue))
-        ranges = [ ServerSim.CONFIG.ip_range.toString(), 
-                   ClientSim.CONFIG.ip_range.toString() ]
-        for r in ranges:
-            iptables_args = [ "iptables", op, 
-                              "INPUT", "-m", "iprange", 
-                              "--src-range", r, "--dst-range", r, 
-                              "-j", "NFQUEUE", "--queue-num", queue 
-                            ]
-            cmd = " ".join(iptables_args)
-            print("Run command: %s" % cmd)
-            #TODO enable iptables_args = ["iptables", "-A", "INPUT", "-p", "udp", "-m", "udp", "--sport", "44000:44999", "--dport", "44000:44999", "-j", "NFQUEUE", "--queue-num", "0"]
-            call(iptables_args)
+        # Merge ranges
+        my_range = IpRange( min(ServerSim.CONFIG.ip_range.start,
+                                ClientSim.CONFIG.ip_range.start),
+                            max(ServerSim.CONFIG.ip_range.end,
+                                ClientSim.CONFIG.ip_range.end) )
+        my_range_str = my_range.toString()
+        # iptables: move to netfilter queue
+        iptables_args = [ "iptables", op, 
+                          "INPUT", "-m", "iprange", 
+                          "--src-range", my_range_str, 
+                          "--dst-range", my_range_str, 
+                          "-j", "NFQUEUE", "--queue-num", queue 
+                        ]
+        run_cmd(iptables_args)
 
     def initEnvironment(self):
-        '''
-        ifconfig eth0:0 33.0.0.1 netmask 255.255.255.0 up
-        iptables -A INPUT -m iprange --src-range 33.0.0.1-33.0.0.255 --dst-range 33.0.0.1-33.0.0.255  -j NFQUEUE --queue-num 0
-        '''
-        
+        self.configQueue(True)
         ServerSim.CONFIG.initEnvironment()
         ClientSim.CONFIG.initEnvironment()
-        
-        self.configQueue(True)
         
     # Servers ------------------------------------------------------------------
         
@@ -134,22 +133,40 @@ class N2NSimulator(object):
     def init(self):
         self.createServers()
         self.createCommunities()
-                
+    
     def start(self):
-        self.initEnvironment()
-        self.filter = Filter(N2NSimulator.CONFIG.queue, self.handleUdp)
-        self.filter.start()
-        self.startServers()
-        self.startCommunities()
+        try:
+            self.initEnvironment()
+            self.filter = Filter(N2NSimulator.CONFIG.queue, self.handleUdp)
+            self.filter.start()
+            self.startServers()
+            self.startCommunities()
+        except Exception as e:
+            print("Error: %s" % str(e))
+            self.stop()
+            return
+        self.running = True
+        self.run()
+    
+    def run(self):
+        while self.running:
+            self.filter.join(timeout=3)
+        self.stop()
         
     def stop(self):
+        if not self.running:
+            return
         print("stopping simulator")
         self.stopCommunities()
         self.stopServers()
-        self.filter.stop()
-        self.filter.join()
+        if self.filter and self.filter.is_alive():
+            self.filter.stop()
+            self.filter.join()
         self.filter = None
+        ServerSim.CONFIG.deinitEnvironment()
+        ClientSim.CONFIG.deinitEnvironment()
         self.configQueue(False)
+        self.running = False
         
     # Running ------------------------------------------------------------------
     
