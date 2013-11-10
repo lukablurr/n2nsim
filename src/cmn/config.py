@@ -50,14 +50,20 @@ class NodeConfig(Config):
         self.port = self.read_int(config_parser, 'port')
         self.mport = self.read_int(config_parser, 'mport')
     
-    def initEnvironment(self):
+    def setupIface(self, up=True):
         ''' E.g. ifconfig eth0:0 33.0.0.1 netmask 255.255.255.0 up '''
         ifconfig_args = [ "ifconfig", self.iface,
                           int2ip(self.ip_range.start),
                           "netmask", int2ip(self.ip_range.netmask()),
-                          "up"
+                          ("up" if up else "down")
                         ]
         cmd = " ".join(ifconfig_args)
         print("Run command: %s" % cmd)
         call(ifconfig_args)
+    
+    def initEnvironment(self):
+        self.setupIface(True)
+    
+    def deinitEnvironment(self):
+        self.setupIface(False)
 
