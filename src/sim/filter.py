@@ -1,6 +1,8 @@
+import os
 import threading
 import socket
 import nfqueue
+import ctypes
 #from dpkt import ip
 import debug
 
@@ -14,11 +16,14 @@ class Filter(threading.Thread):
         threading.Thread.__init__(self)
         self.queueNum = queue_num
         
-        self.queue = nfqueue.queue()
-        self.queue.set_callback(callback)
-        self.queue.fast_open(queue_num, socket.AF_INET)
-        self.queue.set_queue_maxlen(Filter.MAX_QUEUE_LEN)
-        
+        try:
+            self.queue = nfqueue.queue()
+            self.queue.set_callback(callback)
+            self.queue.fast_open(queue_num, socket.AF_INET)
+            self.queue.set_queue_maxlen(Filter.MAX_QUEUE_LEN)
+        except RuntimeError as e:
+            print("RuntimeError: %s" % (os.strerror(ctypes.get_errno())))
+            raise e
         self.running = False
         
     def __del__(self):
