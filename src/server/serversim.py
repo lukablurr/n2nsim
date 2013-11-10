@@ -25,8 +25,11 @@ class ServerSim(NodeSim):
         self.supernode.params.port.setValue( self.localAddress() )
         self.supernode.params.mgmt_port.setValue( self.mgmtAddress() )
         self.supernode.run(ServerSim.CONFIG.path)
+        self.running = True
     
     def stop(self):
-        self.supernode.stop()
-        self.deleteAddress()
+        if self.running:
+            self.supernode.stop()
+            self.deleteAddress()
+            self.running = False
 

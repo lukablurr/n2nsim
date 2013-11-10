@@ -28,8 +28,11 @@ class ClientSim(NodeSim):
         self.addAddress()
         self.edge.params.port.setValue( self.localAddress() )
         self.edge.run(ClientSim.CONFIG.path)
+        self.running = True
     
     def stop(self):
-        self.edge.stop()
-        self.deleteAddress()
+        if self.running:
+            self.edge.stop()
+            self.deleteAddress()
+            self.running = False
 
