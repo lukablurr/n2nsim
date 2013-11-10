@@ -2,6 +2,7 @@ import ConfigParser
 from subprocess import call
 from utils.iprange import IpRange
 from utils.net import int2ip
+from utils.tools import run_cmd
 
 
 class Config(object):
@@ -57,9 +58,7 @@ class NodeConfig(Config):
                           "netmask", int2ip(self.ip_range.netmask()),
                           ("up" if up else "down")
                         ]
-        cmd = " ".join(ifconfig_args)
-        print("Run command: %s" % cmd)
-        call(ifconfig_args)
+        run_cmd(ifconfig_args)
     
     def initEnvironment(self):
         self.setupIface(True)

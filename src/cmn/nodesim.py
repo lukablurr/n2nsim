@@ -1,8 +1,8 @@
 '''
 Simulated node
 '''
-from subprocess import call
 from utils.net import int2ip
+from utils.tools import run_cmd
 
 
 class NodeSim(object):
@@ -13,6 +13,7 @@ class NodeSim(object):
         self.ip = ip
         self.port = port
         self.mport = mport
+        self.running = False
         
     def localAddress(self):
         return ("%s:%d" % (int2ip(self.ip), self.port))
@@ -28,9 +29,9 @@ class NodeSim(object):
         
     def addAddress(self):
         ip_args = [ "ip", "addr", "add", int2ip(self.ip), "broadcast", int2ip(self.CONFIG.ip_range.broadcast()), "dev", self.CONFIG.iface ]
-        call(ip_args)
+        run_cmd(ip_args)
 
     def deleteAddress(self):#TODO remove
-        ip_args = ["ip", "addr", "del", int2ip(self.ip), "dev", self.CONFIG.iface]
-        call(ip_args)
+        ip_args = ["ip", "addr", "del", ("%s/32" % int2ip(self.ip)), "dev", self.CONFIG.iface]
+        run_cmd(ip_args)
 
